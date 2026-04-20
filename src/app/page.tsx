@@ -1,3 +1,5 @@
+"use client";
+
 import { useState, useCallback } from "react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -47,8 +49,11 @@ interface AppState {
 const STORAGE_KEY = "property_scorecard_v5_stable";
 
 function loadState(): Partial<AppState> {
-  try { const r = localStorage.getItem(STORAGE_KEY); return r ? JSON.parse(r) : {}; }
-  catch { return {}; }
+  try {
+    if (typeof window === "undefined") return {};
+    const r = localStorage.getItem(STORAGE_KEY);
+    return r ? JSON.parse(r) : {};
+  } catch { return {}; }
 }
 function persist(s: AppState) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch {}
