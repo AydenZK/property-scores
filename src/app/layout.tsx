@@ -15,18 +15,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang='en'>
-      <body className={inter.className}>{children}</body>
-      <footer className='flex items-center justify-center w-full h-24 border-t text-emerald-700 font-semibold'>
-        <a
-          className='flex items-center justify-center'
-          href='https://artifactbin.com?utm_source=template-repo&utm_campaign=oss'
-          target='_blank'
-          rel='noopener noreferrer'
-        >
-          Deployed by Artifact Bin
-        </a>
-      </footer>
+    <html lang="en">
+      <body style={{ margin: 0, padding: 0, background: "#fff" }}>
+        {children}
+      </body>
     </html>
   );
 }
