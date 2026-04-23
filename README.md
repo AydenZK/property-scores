@@ -49,4 +49,4 @@ In the app, open `☁ Sync` and:
 
 ## License
 
-Released under the MIT License. See `LICENSE`.
+Released under the MIT License. See `LICENSE`..
