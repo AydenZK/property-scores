@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -49,6 +49,15 @@ interface AppState {
 // ─── Storage ──────────────────────────────────────────────────────────────────
 
 const STORAGE_KEY = "property_scorecard_v5_stable";
+const CLOUD_SYNC_KEY_STORAGE = `${STORAGE_KEY}:cloud_sync_key`;
+
+type PersistedState = Omit<AppState, "view">;
+
+interface CloudRecord {
+  schemaVersion: number;
+  updatedAt: number;
+  state: PersistedState;
+}
 
 function migrateProp(p: any): Property {
   return {
@@ -74,19 +83,37 @@ function migrateProp(p: any): Property {
   };
 }
 
+function normalizeLoadedState(parsed: any): Partial<AppState> {
+  if (!parsed || typeof parsed !== "object") return {};
+  const next: Partial<AppState> = {};
+  if (parsed.properties) next.properties = parsed.properties.map(migrateProp);
+  if (parsed.config && typeof parsed.config === "object") next.config = parsed.config;
+  if (typeof parsed.activePropertyId === "string" || parsed.activePropertyId === null) {
+    next.activePropertyId = parsed.activePropertyId;
+  }
+  return next;
+}
+
 function loadState(): Partial<AppState> {
   try {
     if (typeof window === "undefined") return {};
     const r = localStorage.getItem(STORAGE_KEY);
     if (!r) return {};
-    const parsed = JSON.parse(r);
-    if (parsed.properties) parsed.properties = parsed.properties.map(migrateProp);
-    return parsed;
+    return normalizeLoadedState(JSON.parse(r));
   }
   catch { return {}; }
 }
+
 function persist(s: AppState) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch {}
+}
+
+function toPersistedState(s: AppState): PersistedState {
+  return {
+    properties: s.properties,
+    config: s.config,
+    activePropertyId: s.activePropertyId,
+  };
 }
 
 // ─── Defaults ─────────────────────────────────────────────────────────────────
@@ -178,7 +205,7 @@ function parseListingText(text: string): Partial<Property> {
     result.baths = parseInt(statsMatch[2]);
     result.cars = parseInt(statsMatch[3]);
   } else {
-    const nums = [...text.matchAll(/[*•]\s*(\d+)(?!\s*m)/g)].map(m => parseInt(m[1]));
+    const nums = Array.from(text.matchAll(/[*•]\s*(\d+)(?!\s*m)/g)).map(m => parseInt(m[1]));
     if (nums[0] != null) result.beds = nums[0];
     if (nums[1] != null) result.baths = nums[1];
     if (nums[2] != null) result.cars = nums[2];
@@ -456,7 +483,7 @@ function ConfigPanel({ config, onChange }: { config: AppConfig; onChange: (c: Ap
           siteValue = <b style={{color:"#2563eb"}}>landSqm</b> × <b style={{color:"#7c3aed"}}>landPricePerSqm</b>
         </div>
         <div style={{ fontSize:11, color:"#888", marginBottom:10 }}>
-          Anchored to actual land market prices — not age-sensitive. A bigger block is worth more regardless of what's on it.<br/>
+          Anchored to actual land market prices — not age-sensitive. A bigger block is worth more regardless of what&apos;s on it.<br/>
           <b>Calibration:</b> Property 1 (512m², $400k actual site) → $781/m². Current setting: ${config.landPricePerSqm}/m² → ${p1est}k est. vs ${p1actual}k actual.
         </div>
 
@@ -794,6 +821,81 @@ function PropertyTab({ p, idx, config, isActive, onClick }: { p: Property; idx: 
   );
 }
 
+function CloudSyncPanel({
+  syncKey,
+  onSyncKeyChange,
+  statusText,
+  isBusy,
+  connected,
+  autoSyncEnabled,
+  onAutoSyncChange,
+  onConnect,
+  onPull,
+  onPush,
+}: {
+  syncKey: string;
+  onSyncKeyChange: (v: string) => void;
+  statusText: string;
+  isBusy: boolean;
+  connected: boolean;
+  autoSyncEnabled: boolean;
+  onAutoSyncChange: (v: boolean) => void;
+  onConnect: () => void;
+  onPull: () => void;
+  onPush: () => void;
+}) {
+  return (
+    <div style={{ border:"1px solid #e5e5e5", borderRadius:6, padding:"12px", marginBottom:16, background:"#fafafa" }}>
+      <Badge color="#555">Cloud Sync</Badge>
+      <div style={{ fontSize:11, color:"#777", marginBottom:8 }}>
+        Use the same sync key on each device to share one scorecard dataset.
+      </div>
+      <div style={{ ...FL, gap:8, marginBottom:8 }}>
+        <input
+          type="password"
+          value={syncKey}
+          placeholder="Private sync key"
+          onChange={e => onSyncKeyChange(e.target.value)}
+          style={{ flex:1, border:"1px solid #ddd", borderRadius:4, padding:"8px 10px", fontSize:12, fontFamily:"inherit", outline:"none" }}
+        />
+        <button
+          onClick={onConnect}
+          disabled={isBusy || !syncKey.trim()}
+          style={{ padding:"8px 12px", border:"1px solid #111", borderRadius:4, background:"#111", color:"#fff", fontSize:11, cursor:isBusy?"not-allowed":"pointer", fontFamily:"inherit", opacity:isBusy?0.6:1 }}
+        >
+          Connect
+        </button>
+      </div>
+      <div style={{ ...FL, gap:8, marginBottom:8 }}>
+        <button
+          onClick={onPull}
+          disabled={isBusy || !connected}
+          style={{ flex:1, padding:"7px 10px", border:"1px solid #ddd", borderRadius:4, background:"#fff", color:"#444", fontSize:11, cursor:isBusy||!connected?"not-allowed":"pointer", fontFamily:"inherit", opacity:isBusy||!connected?0.6:1 }}
+        >
+          Pull latest
+        </button>
+        <button
+          onClick={onPush}
+          disabled={isBusy || !connected}
+          style={{ flex:1, padding:"7px 10px", border:"1px solid #ddd", borderRadius:4, background:"#fff", color:"#444", fontSize:11, cursor:isBusy||!connected?"not-allowed":"pointer", fontFamily:"inherit", opacity:isBusy||!connected?0.6:1 }}
+        >
+          Push now
+        </button>
+      </div>
+      <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:11, color:"#666", marginBottom:8 }}>
+        <input
+          type="checkbox"
+          checked={autoSyncEnabled}
+          onChange={e => onAutoSyncChange(e.target.checked)}
+          disabled={!connected}
+        />
+        Auto-sync after edits
+      </label>
+      <div style={{ fontSize:11, color:"#888" }}>{statusText}</div>
+    </div>
+  );
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 export default function PropertyScorecard() {
@@ -806,8 +908,131 @@ export default function PropertyScorecard() {
       view: "scorecard",
     };
   });
+  const [showCloudSync, setShowCloudSync] = useState(false);
+  const [syncKey, setSyncKey] = useState("");
+  const [syncConnected, setSyncConnected] = useState(false);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncStatusText, setSyncStatusText] = useState("Local-only mode.");
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
+  const pendingPushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skipAutoPushRef = useRef(false);
+  const mountedRef = useRef(false);
 
   const update = useCallback((next: AppState) => { setState(next); persist(next); }, []);
+  const applyIncomingState = useCallback((rawState: PersistedState) => {
+    const loaded = normalizeLoadedState(rawState);
+    const next: AppState = {
+      properties: loaded.properties ?? [],
+      config: loaded.config ? { ...DEFAULT_CONFIG, ...loaded.config, criteria: loaded.config.criteria ?? DEFAULT_CRITERIA } : DEFAULT_CONFIG,
+      activePropertyId: loaded.activePropertyId ?? null,
+      view: "scorecard",
+    };
+    skipAutoPushRef.current = true;
+    update(next);
+  }, [update]);
+
+  const pushCloudState = useCallback(async (snapshot: AppState, reason: "manual" | "auto" | "connect" = "manual") => {
+    if (!syncKey.trim() || !syncConnected) return false;
+    setSyncBusy(true);
+    try {
+      const payload: CloudRecord = {
+        schemaVersion: 1,
+        updatedAt: Date.now(),
+        state: toPersistedState(snapshot),
+      };
+
+      const res = await fetch("/api/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "push", syncKey: syncKey.trim(), payload }),
+      });
+
+      const body = await res.json();
+      if (!res.ok || !body.ok) throw new Error(body.message ?? "Cloud push failed");
+      setSyncStatusText(`Cloud saved ${reason === "auto" ? "automatically" : "successfully"} (${new Date().toLocaleTimeString()}).`);
+      return true;
+    } catch (e) {
+      setSyncStatusText(e instanceof Error ? e.message : "Cloud push failed.");
+      return false;
+    } finally {
+      setSyncBusy(false);
+    }
+  }, [syncConnected, syncKey]);
+
+  const pullCloudState = useCallback(async (key: string): Promise<CloudRecord | null | "error"> => {
+    setSyncBusy(true);
+    try {
+      const res = await fetch("/api/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "pull", syncKey: key.trim() }),
+      });
+      const body = await res.json();
+      if (!res.ok || !body.ok) throw new Error(body.message ?? "Cloud pull failed");
+
+      const record = body.record as CloudRecord | null;
+      if (!record) {
+        setSyncStatusText("Connected. No cloud snapshot exists yet; your next save will create one.");
+        return null;
+      }
+
+      applyIncomingState(record.state);
+      setSyncStatusText(`Cloud loaded (${new Date(record.updatedAt).toLocaleString()}).`);
+      return record;
+    } catch (e) {
+      setSyncStatusText(e instanceof Error ? e.message : "Cloud pull failed.");
+      return "error";
+    } finally {
+      setSyncBusy(false);
+    }
+  }, [applyIncomingState]);
+
+  const connectCloudSync = useCallback(async () => {
+    const key = syncKey.trim();
+    if (!key) return;
+    const pulled = await pullCloudState(key);
+    if (pulled === "error") return;
+    setSyncConnected(true);
+    localStorage.setItem(CLOUD_SYNC_KEY_STORAGE, key);
+    if (!pulled) {
+      await pushCloudState(state, "connect");
+    }
+  }, [pullCloudState, pushCloudState, state, syncKey]);
+
+  useEffect(() => {
+    if (mountedRef.current || typeof window === "undefined") return;
+    mountedRef.current = true;
+    const savedSyncKey = localStorage.getItem(CLOUD_SYNC_KEY_STORAGE) ?? "";
+    const savedAutoSync = localStorage.getItem(`${CLOUD_SYNC_KEY_STORAGE}:autosync`);
+    setAutoSyncEnabled(savedAutoSync !== "0");
+    if (savedSyncKey) {
+      setSyncKey(savedSyncKey);
+      void pullCloudState(savedSyncKey).then(result => {
+        if (result !== "error") setSyncConnected(true);
+      });
+    }
+  }, [pullCloudState]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(`${CLOUD_SYNC_KEY_STORAGE}:autosync`, autoSyncEnabled ? "1" : "0");
+  }, [autoSyncEnabled]);
+
+  useEffect(() => {
+    if (!syncConnected || !syncKey.trim() || !autoSyncEnabled) return;
+    if (skipAutoPushRef.current) {
+      skipAutoPushRef.current = false;
+      return;
+    }
+    if (pendingPushRef.current) clearTimeout(pendingPushRef.current);
+    pendingPushRef.current = setTimeout(() => {
+      void pushCloudState(state, "auto");
+    }, 1000);
+    return () => {
+      if (pendingPushRef.current) clearTimeout(pendingPushRef.current);
+    };
+  }, [autoSyncEnabled, pushCloudState, state, syncConnected, syncKey]);
+
   const updateProp = (up: Property) => update({ ...state, properties: state.properties.map(p => p.id===up.id ? up : p) });
   const deleteProp = (id: string) => { const r = state.properties.filter(p => p.id!==id); update({...state, properties:r, activePropertyId:r[0]?.id??null}); };
   const addProp = (p: Property) => update({...state, properties:[...state.properties,p], activePropertyId:p.id, view:"scorecard"});
@@ -829,8 +1054,27 @@ export default function PropertyScorecard() {
               {v==="config" ? "⚙ Config" : "+ Add"}
             </button>
           ))}
+          <button onClick={() => setShowCloudSync(v => !v)}
+            style={{ padding:"6px 12px", border:`1px solid ${showCloudSync?"#111":"#ddd"}`, borderRadius:4, background:showCloudSync?"#111":"#fff", color:showCloudSync?"#fff":"#555", fontSize:11, cursor:"pointer", fontFamily:"inherit" }}>
+            ☁ Sync
+          </button>
         </div>
       </div>
+
+      {showCloudSync && (
+        <CloudSyncPanel
+          syncKey={syncKey}
+          onSyncKeyChange={setSyncKey}
+          statusText={syncStatusText}
+          isBusy={syncBusy}
+          connected={syncConnected}
+          autoSyncEnabled={autoSyncEnabled}
+          onAutoSyncChange={setAutoSyncEnabled}
+          onConnect={() => { void connectCloudSync(); }}
+          onPull={() => { if (syncKey.trim()) void pullCloudState(syncKey.trim()); }}
+          onPush={() => { void pushCloudState(state, "manual"); }}
+        />
+      )}
 
       {state.view==="add" && <AddPanel onAdd={addProp} onCancel={() => update({...state, view:"scorecard"})} />}
       {state.view==="config" && <ConfigPanel config={state.config} onChange={cfg => update({...state, config:cfg})} />}
