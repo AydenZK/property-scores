@@ -34,6 +34,8 @@ interface Property {
   manualScores: Record<string, number | null>;
   physicalFlags: Record<string, boolean>;
   physicalChecks: Record<string, boolean>;
+  agentChecks: Record<string, boolean>;
+  agentAnswers: Record<string, string>;
   notes: string;
 }
 
@@ -48,10 +50,38 @@ interface AppState {
 
 const STORAGE_KEY = "property_scorecard_v5_stable";
 
+function migrateProp(p: any): Property {
+  return {
+    id: p.id ?? Date.now().toString(),
+    street: p.street ?? "",
+    suburb: p.suburb ?? "",
+    price: p.price ?? "",
+    beds: p.beds ?? null,
+    baths: p.baths ?? null,
+    cars: p.cars ?? null,
+    landSqm: p.landSqm ?? null,
+    buildYear: p.buildYear ?? null,
+    askingPriceK: p.askingPriceK ?? null,
+    weeklyRent: p.weeklyRent ?? null,
+    siteValueK: p.siteValueK ?? null,
+    civK: p.civK ?? null,
+    manualScores: p.manualScores ?? {},
+    physicalFlags: p.physicalFlags ?? {},
+    physicalChecks: p.physicalChecks ?? {},
+    agentChecks: p.agentChecks ?? {},
+    agentAnswers: p.agentAnswers ?? {},
+    notes: p.notes ?? "",
+  };
+}
+
 function loadState(): Partial<AppState> {
   try {
     if (typeof window === "undefined") return {};
-    const r = localStorage.getItem(STORAGE_KEY); return r ? JSON.parse(r) : {};
+    const r = localStorage.getItem(STORAGE_KEY);
+    if (!r) return {};
+    const parsed = JSON.parse(r);
+    if (parsed.properties) parsed.properties = parsed.properties.map(migrateProp);
+    return parsed;
   }
   catch { return {}; }
 }
@@ -112,6 +142,20 @@ const PHYSICAL_CHECKS = [
   {id:"floors",label:"Floors solid — no bounce or unevenness",sub:"Use phone level app",canFlag:true},
   {id:"easement",label:"No concerning easements",sub:"Power lines, drain lids",canFlag:true},
   {id:"slope",label:"No significant slope",sub:"Adds development cost",canFlag:true},
+];
+
+const AGENT_QUESTIONS = [
+  { id:"ratesNotice",    label:"Rates notice received?",             hint:"Ask agent to email it — needed for site value ÷ CIV",        hasAnswer:false },
+  { id:"siteValue",      label:"Site value confirmed from notice",   hint:"Write the site value (SV) and CIV from the rates notice",     hasAnswer:true,  answerLabel:"Site Value / CIV" },
+  { id:"rentalAppraisal",label:"Rental appraisal obtained?",         hint:"Ask agent for their rental estimate for this property",       hasAnswer:true,  answerLabel:"Est. weekly rent ($/wk)" },
+  { id:"daysOnMarket",   label:"Days on market confirmed",           hint:"How long has it been listed? Agent must disclose",            hasAnswer:true,  answerLabel:"Days on market" },
+  { id:"existingOffers", label:"Any existing offers?",               hint:"Are there other buyers? Are they conditional or unconditional?",hasAnswer:true, answerLabel:"Offer details" },
+  { id:"sellerMotivation",label:"Why is the vendor selling?",        hint:"Deceased estate, divorce, upgrading, financial pressure?",    hasAnswer:true,  answerLabel:"Reason" },
+  { id:"tenancy",        label:"Tenancy status confirmed",           hint:"Vacant or tenanted? If tenanted, lease end date?",            hasAnswer:true,  answerLabel:"Vacant / tenanted (lease end)" },
+  { id:"councilOrders",  label:"Any council orders or violations?",  hint:"Unpermitted structures, outstanding notices etc",             hasAnswer:false },
+  { id:"flooding",       label:"Has property ever flooded?",         hint:"Agents must disclose known flooding — ask directly",          hasAnswer:false },
+  { id:"chattels",       label:"Chattels / inclusions confirmed",    hint:"What's staying? White goods, blinds, sheds, solar?",       hasAnswer:true,  answerLabel:"What's included" },
+  { id:"section32",      label:"Section 32 (Vendor Statement) sighted", hint:"Review before signing anything",                          hasAnswer:false },
 ];
 
 // ─── Listing Parser ───────────────────────────────────────────────────────────
@@ -260,7 +304,7 @@ function getVerdict(score: number, max: number) {
 }
 
 function newProp(): Property {
-  return { id: Date.now().toString(), street:"", suburb:"", price:"", beds:null, baths:null, cars:null, landSqm:null, buildYear:null, askingPriceK:null, weeklyRent:null, siteValueK:null, civK:null, manualScores:{}, physicalFlags:{}, physicalChecks:{}, notes:"" };
+  return { id: Date.now().toString(), street:"", suburb:"", price:"", beds:null, baths:null, cars:null, landSqm:null, buildYear:null, askingPriceK:null, weeklyRent:null, siteValueK:null, civK:null, manualScores:{}, physicalFlags:{}, physicalChecks:{}, agentChecks:{}, agentAnswers:{}, notes:"" };
 }
 
 // ─── UI Primitives ────────────────────────────────────────────────────────────
@@ -648,6 +692,44 @@ function PropertyCard({ property, config, onChange, onDelete }: {
               {chk.canFlag && (
                 <button onClick={e => { e.stopPropagation(); toggleFlag(chk.id); }}
                   style={{ fontSize:11, padding:"2px 6px", border:`1px solid ${flagged?"#dc2626":"#e0e0e0"}`, borderRadius:3, background:"none", cursor:"pointer", color:flagged?"#dc2626":"#ccc", fontWeight:700 }}>⚑</button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+
+      {/* ── Agent Questions ── */}
+      <Badge color="#555">Agent Questions</Badge>
+      <div style={{ fontSize:11, color:"#888", marginBottom:12 }}>
+        Tick when asked, fill in answers. These feed directly into your scorecard inputs above.
+      </div>
+      <div style={{ marginBottom:16 }}>
+        {AGENT_QUESTIONS.map(q => {
+          const checked = !!p.agentChecks[q.id];
+          const answer = p.agentAnswers[q.id] ?? "";
+          return (
+            <div key={q.id} style={{ paddingBottom:12, marginBottom:12, borderBottom:"1px solid #f5f5f5" }}>
+              <div style={{ ...FL, alignItems:"flex-start", gap:10, cursor:"pointer", marginBottom: q.hasAnswer && checked ? 8 : 0 }}
+                onClick={() => onChange({ ...p, agentChecks:{ ...p.agentChecks, [q.id]:!checked } })}>
+                <div style={{ width:18, height:18, minWidth:18, border:`1.5px solid ${checked?"#111":"#ccc"}`, borderRadius:3, display:"flex", alignItems:"center", justifyContent:"center", marginTop:1, background:checked?"#111":"#fff", flexShrink:0 }}>
+                  {checked && <span style={{ color:"#fff", fontSize:11 }}>✓</span>}
+                </div>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:13, fontWeight:600, color:checked?"#bbb":"#111", textDecoration:checked&&!q.hasAnswer?"line-through":"none" }}>{q.label}</div>
+                  <div style={{ fontSize:11, color:"#aaa", marginTop:2 }}>{q.hint}</div>
+                </div>
+              </div>
+              {q.hasAnswer && (
+                <div style={{ marginLeft:28 }}>
+                  <input
+                    type="text"
+                    value={answer}
+                    placeholder={q.answerLabel}
+                    onChange={e => onChange({ ...p, agentAnswers:{ ...p.agentAnswers, [q.id]:e.target.value }, agentChecks:{ ...p.agentChecks, [q.id]: e.target.value.length > 0 ? true : p.agentChecks[q.id] } })}
+                    style={{ width:"100%", border:"1px solid #e0e0e0", borderRadius:4, padding:"6px 10px", fontSize:12, fontFamily:"inherit", outline:"none", background:answer?"#fff":"#fafafa", boxSizing:"border-box" as const }}
+                  />
+                </div>
               )}
             </div>
           );
