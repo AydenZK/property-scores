@@ -1,16 +1,12 @@
 import crypto from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { Redis } from "@upstash/redis";
+import { createClient } from "redis";
 
 export const runtime = "nodejs";
 
-const redis =
-  process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN
-    ? new Redis({
-        url: process.env.KV_REST_API_URL,
-        token: process.env.KV_REST_API_TOKEN,
-      })
-    : null;
+const redisUrl = process.env.REDIS_URL ?? "";
+const redis = redisUrl ? createClient({ url: redisUrl }) : null;
+let redisConnected = false;
 
 const KEY_NAMESPACE = "property_scorecard_v1";
 const MAX_SYNC_KEY_LENGTH = 128;
@@ -37,14 +33,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         ok: false,
-        message:
-          "Cloud sync is not configured on the server. Add KV_REST_API_URL and KV_REST_API_TOKEN.",
+        message: "Cloud sync is not configured on the server. Add REDIS_URL.",
       },
       { status: 500 },
     );
   }
 
   try {
+    if (!redisConnected) {
+      await redis.connect();
+      redisConnected = true;
+    }
+
     const body = (await request.json()) as {
       action?: SyncAction;
       syncKey?: string;
@@ -65,7 +65,8 @@ export async function POST(request: NextRequest) {
     const storeKey = getStoreKey(syncKey);
 
     if (action === "pull") {
-      const record = await redis.get<CloudRecord>(storeKey);
+      const raw = await redis.get(storeKey);
+      const record = typeof raw === "string" ? (JSON.parse(raw) as CloudRecord) : null;
       return NextResponse.json({ ok: true, record: record ?? null });
     }
 
@@ -76,7 +77,7 @@ export async function POST(request: NextRequest) {
     }
 
     const record: CloudRecord = { schemaVersion, updatedAt, state };
-    await redis.set(storeKey, record);
+    await redis.set(storeKey, JSON.stringify(record));
     return NextResponse.json({ ok: true, record });
   } catch {
     return NextResponse.json(

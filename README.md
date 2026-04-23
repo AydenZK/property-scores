@@ -16,16 +16,15 @@ Property inspection scorecard for Melbourne outer-suburb investment analysis.
 
 ## Cloud Sync (cross-device persistence)
 
-The app now supports cloud sync through Upstash Redis (via Vercel integration), so your data can be shared between phone and desktop.
+The app supports cloud sync through Vercel Redis, so your data can be shared between phone and desktop.
 
 ### 1) Set server environment variables
 
-In Vercel project settings, add:
+In Vercel project settings, ensure this exists:
 
-- `KV_REST_API_URL`
-- `KV_REST_API_TOKEN`
+- `REDIS_URL`
 
-You can get these automatically by installing a Redis integration from the Vercel marketplace.
+If Redis is attached as an integration, this variable is usually added automatically.
 
 ### 2) Deploy
 
@@ -49,4 +48,4 @@ In the app, open `☁ Sync` and:
 
 ## License
 
-Released under the MIT License. See `LICENSE`..
+Released under the MIT License. See `LICENSE`.
